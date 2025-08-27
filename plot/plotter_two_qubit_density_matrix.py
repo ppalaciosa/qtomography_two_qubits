@@ -4,7 +4,7 @@ import matplotlib as mpl
 
 def plot_density_matrix_bars(matrix, title, cmap='bwr', 
                              vmin=-1, vmax=1, ax=None, labels=None,
-                             annotate=True):
+                             annotate=True, show_colorbar=True):
     """
     Plots a 3D bar chart of a matrix component (real, imaginary, or magnitude).
 
@@ -17,17 +17,19 @@ def plot_density_matrix_bars(matrix, title, cmap='bwr',
         ax (matplotlib.axes._subplots.Axes3DSubplot): 3D subplot axis to draw on.
         labels (list): List of basis labels for x and y axes.
         annotate: bool, add value text at each bar
+        show_colorbar: Whether to show the colorbar legend.
     """
-    n = matrix.shape[0]
+    n = matrix.shape[0] # Number of rows/columns in the matrix (assumed square)
     assert matrix.shape[1] == n, "Matrix must be square"
     
     # Prepare 3D axis
     if ax is None:
         fig = plt.figure(figsize=(6,5))
         ax = fig.add_subplot(111, projection='3d')
-    
+
     # Use 'xy' indexing for orientation consistency
     xpos, ypos = np.meshgrid(np.arange(n), np.arange(n), indexing='xy')
+    # ravel is flatten , order C is regular order flattening
     xpos = xpos.ravel(order='C')
     ypos = ypos.ravel(order='C')
     dz   = matrix.ravel(order='C')
@@ -39,11 +41,11 @@ def plot_density_matrix_bars(matrix, title, cmap='bwr',
     colors = mappable.to_rgba(dz)
     colors[:, -1] = 0.8  # semi-transparent bars
     
-    # Bars extend up or down from zero
+    # Bars extend up (positive) or down (negative) from zero
     bottoms = np.where(dz < 0, dz, 0)
     heights = np.abs(dz)
 
-    # Add a gray plane at z=0
+    # Plot a faint gray plane at z=0 for reference
     xx, yy = np.meshgrid(np.linspace(-0.5, n+0.3, 10),
                          np.linspace(-0.5, n+0.3, 10), indexing='xy')
     zz = np.zeros_like(xx)
@@ -60,6 +62,7 @@ def plot_density_matrix_bars(matrix, title, cmap='bwr',
     # Ticks & labels
     ax.set_xticks(np.arange(n) + 0.35)
     ax.set_yticks(np.arange(n) + 0.35)
+    # Set axis labels if provided
     if labels is not None:
         ax.set_xticklabels(labels)
         ax.set_yticklabels(labels)
@@ -70,11 +73,15 @@ def plot_density_matrix_bars(matrix, title, cmap='bwr',
     ax.set_zlim(vmin, vmax)
     ax.view_init(elev=25, azim=-60)
 
-    # Colorbar legend
-    plt.colorbar(mappable, ax=ax, fraction=0.03,
-                 pad=0.1, label='Value')
+    # Show colorbar if requested
+    if show_colorbar:
+        plt.colorbar(mappable,
+                     ax=ax,
+                     fraction=0.03,
+                     pad=0.1,
+                     label='Value')
     
-    # Annotate values
+    # Annotate value at each bar top (or bottom if negative)
     if annotate:
         for x, y, v in zip(xpos, ypos, dz):
             txt = f"{v:.3f}"
@@ -88,7 +95,10 @@ def plot_density_matrix(matrix,
                         basis_labels=None, 
                         components=['real', 'imag', 'abs'],
                         zmin=-1.0, zmax=1.0,
-                        annotate=False):
+                        annotate=False,
+                        filename=None,
+                        show=True,
+                        cmap='managua'):
     """
     Plot the selected components of a 4×4 density matrix in 3D bar charts,
     using a fixed z-axis and color range [zmin, zmax].
@@ -101,36 +111,46 @@ def plot_density_matrix(matrix,
         components   : subset of ['real','imag','abs'] to plot.
         zmin, zmax   : fixed limits for z axis and colormap.
         annotate     : bool, add value text at each bar.
+        filename     : If given, save the figure to this path instead of showing.
+                       Supports png, svg, pdf etc by file extension.
+        show         : bool, shows the plot.
+        cmap (str)   : Colormap to use for the bars.
     """
     # Default basis
     if basis_labels is None:
         basis_labels = ['HH','HV','VH','VV']
 
-    # Map component → (transform, subplot title, colormap)
-    cmap_map = {
-        'real': (np.real, 'Real Part',       'managua'),
-        'imag': (np.imag, 'Imaginary Part', 'managua'),
-        'abs' : (np.abs,  'Magnitude',      'managua')
+    # Map each possible component to its transformation function and title
+    state_component_map = {
+        'real': (np.real, 'Real Part'),
+        'imag': (np.imag, 'Imaginary Part'),
+        'abs' : (np.abs,  'Magnitude')
     }
-
-    chosen = [c for c in components if c in cmap_map]
+    
+    # Filter requested components, keep only valid ones
+    chosen = [c for c in components if c in state_component_map]
     if not chosen:
         raise ValueError("No valid components selected!")
 
     fig = plt.figure(figsize=(6*len(chosen), 5))
     fig.suptitle(state_label, y=1.02)
 
-    # Plot each component in its own subplot
+    # Loop through each component and make a subplot
     for i, comp in enumerate(chosen):
-        func, title, cmap = cmap_map[comp]
+        func, title = state_component_map[comp]
         ax = fig.add_subplot(1, len(chosen), i+1, projection='3d')
         data = func(matrix)
+        # Show colorbar only on last subplot if saving to avoid clutter
+        show_cb = (filename is None or i == len(chosen) - 1)
         plot_density_matrix_bars(data, title, cmap=cmap,
                                  vmin=zmin, vmax=zmax,
                                  ax=ax, labels=basis_labels,
-                                 annotate=annotate)
+                                 annotate=annotate,
+                                 show_colorbar=show_cb)
 
-    #plt.tight_layout()
+    #plt.tight_layout()  # Not used due to 3D axes issues
+    if filename:
+        fig.savefig(filename, bbox_inches='tight')
     plt.show()
 
 # Example usage
@@ -142,13 +162,16 @@ if __name__ == "__main__":
     psi_m[1] =  1/np.sqrt(2)
     psi_m[2] = -1/np.sqrt(2)
 
+    # Density matrices for each pure state
     rho_p = np.outer(psi_p, psi_p.conj())
     rho_m = np.outer(psi_m, psi_m.conj())
     rho_mix = 0.5*rho_p + 0.5*rho_m
 
     # Plot real and magnitude, with z axis fixed to [-1,1]
     plot_density_matrix(rho_mix,
-                        state_label=r"Mixed: 50% $|\psi^+\rangle$ + 50% $|\psi^-\rangle$",
+                        state_label=r"Mixed: 50% \
+                        $|\psi^+\rangle$ + 50% $|\psi^-\rangle$",
                         components=['real','abs'],
-                        zmin=-1, zmax=1)
-
+                        zmin=-1, zmax=1,
+                        annotate=True,
+                        filename='density_matrix_example.pdf')
